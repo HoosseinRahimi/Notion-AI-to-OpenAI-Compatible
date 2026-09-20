@@ -5,7 +5,7 @@ import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeGuard
 
 from notionchat.exceptions import NotionChatError
 
@@ -236,10 +236,10 @@ def _is_fence_lang_prefix(candidate: str) -> bool:
 
 def _is_extensible_fence_lang(lang: str) -> bool:
     """True if lang can still grow into a longer known language (py→python, js→json)."""
-    l = lang.lower()
-    if not l:
+    lang_lower = lang.lower()
+    if not lang_lower:
         return True
-    return any(known.startswith(l) and known != l for known in _FENCE_LANG_COMMON)
+    return any(known.startswith(lang_lower) and known != lang_lower for known in _FENCE_LANG_COMMON)
 
 
 def _join_text_blocks(parts: list[str]) -> str:
@@ -263,10 +263,7 @@ def _join_text_blocks(parts: list[str]) -> str:
         fence = _OPEN_FENCE_LANG_RE.search(out)
         if fence is not None:
             lang = fence.group(1)
-            if (
-                _FENCE_LANG_FRAG_RE.fullmatch(part)
-                and len(lang) + len(part) <= 20
-            ):
+            if _FENCE_LANG_FRAG_RE.fullmatch(part) and len(lang) + len(part) <= 20:
                 candidate = lang + part
                 # Single-char fragments: keep gluing while the id can still grow
                 # into a longer known language (py→python, js→json).
@@ -348,6 +345,7 @@ def _repair_split_fence_languages(text: str) -> str:
         return match.group(0)
 
     return _FENCE_LANG_TAIL_RE.sub(_repl_tail, text)
+
 
 @dataclass(slots=True)
 class NDJSONParseResult:
@@ -440,7 +438,6 @@ def _strip_meta_reasoning(text: str) -> str:
     return ""
 
 
-
 def clean_notion_output_text(text: str, *, finalize: bool = True) -> str:
     """Remove Notion web-search, Notion-page, and meta-reasoning lead-ins that leak into assistant text.
 
@@ -473,9 +470,8 @@ def clean_notion_output_text(text: str, *, finalize: bool = True) -> str:
     if "\n" in stripped:
         first_line, rest = stripped.split("\n", 1)
         if (
-            (_looks_like_search_preamble(first_line) or _looks_like_notion_page_preamble(first_line))
-            and rest.strip()
-        ):
+            _looks_like_search_preamble(first_line) or _looks_like_notion_page_preamble(first_line)
+        ) and rest.strip():
             stripped = rest.strip()
 
     if (
@@ -512,7 +508,8 @@ def _repair_missing_whitespace(text: str) -> str:
     text = _MISSING_BULLET_BREAK_RE.sub(lambda m: f"{m.group(1)}\n- ", text)
     return text
 
-def _is_int(value: Any) -> bool:
+
+def _is_int(value: Any) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -626,7 +623,9 @@ class NDJSONStreamParser:
     def _register_confirmation_entry(self, entry: dict[str, Any]) -> None:
         if entry.get("type") != "agent-tool-result":
             return
-        if entry.get("state") != "confirmation:requested" and not entry.get("requestedConfirmation"):
+        if entry.get("state") != "confirmation:requested" and not entry.get(
+            "requestedConfirmation"
+        ):
             return
         entry_id = entry.get("id")
         if not isinstance(entry_id, str) or entry_id in self._seen_confirmation_ids:
@@ -696,7 +695,10 @@ class NDJSONStreamParser:
     def _raise_inference_error(self, entry: dict[str, Any]) -> None:
         sub_type = entry.get("subType") or ""
         message = entry.get("message") or "Notion rejected the inference request"
-        if entry.get("type") == "premium-feature-unavailable" or sub_type == "premium-feature-unavailable":
+        if (
+            entry.get("type") == "premium-feature-unavailable"
+            or sub_type == "premium-feature-unavailable"
+        ):
             self._raise_premium_unavailable(entry)
         if sub_type == "trust-rule-denied":
             raise NotionChatError(
@@ -762,7 +764,7 @@ class NDJSONStreamParser:
         if o in ("a", "p") and "/value/" in p and isinstance(v, dict):
             state_prefix = p[: p.index("/value/")]
             entry_type = v.get("type")
-            
+
             # Extract the index or '-' from the path (e.g. /s/0/value/12 or /s/0/value/-)
             val_part = p[p.index("/value/") + 7 :]
             if "/" not in val_part:
@@ -773,13 +775,15 @@ class NDJSONStreamParser:
                         idx = int(val_part)
                     except ValueError:
                         idx = self._value_counts.get(state_prefix, 0)
-                
+
                 entry_path = f"{state_prefix}/value/{idx}"
                 if isinstance(entry_type, str):
                     self._value_types[entry_path] = entry_type
-                
-                self._value_counts[state_prefix] = max(self._value_counts.get(state_prefix, 0), idx + 1)
-                
+
+                self._value_counts[state_prefix] = max(
+                    self._value_counts.get(state_prefix, 0), idx + 1
+                )
+
                 content = v.get("content")
                 if entry_type == "tool_use":
                     self._register_tool_use(entry_path, v)

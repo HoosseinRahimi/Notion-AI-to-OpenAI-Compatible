@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from typing import Any
@@ -29,7 +30,6 @@ _IDE_TOOL_EXACT = frozenset(
         "fetch_mcp_resource",
         "str_replace_editor",
         "read",
-        "write",
         "strreplace",
         "shell",
         "delete",
@@ -167,7 +167,9 @@ def _extract_text(content: str | list[Any] | None) -> str:
             if item_type == "text":
                 parts.append(str(item.get("text", "")))
             elif item_type in ("tool_result", "tool_use_result", "tool_result_error"):
-                parts.append(str(item.get("content") or item.get("output") or item.get("text") or ""))
+                parts.append(
+                    str(item.get("content") or item.get("output") or item.get("text") or "")
+                )
             elif "text" in item:
                 parts.append(str(item["text"]))
         elif isinstance(item, str):
@@ -205,7 +207,8 @@ def normalize_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
                     "function": {
                         "name": tool["name"],
                         "description": tool.get("description", ""),
-                        "parameters": tool.get("parameters") or {"type": "object", "properties": {}},
+                        "parameters": tool.get("parameters")
+                        or {"type": "object", "properties": {}},
                     },
                 }
             )
@@ -289,6 +292,10 @@ _LANG_DEFAULT_PATH: dict[str, str] = {
 }
 
 
+def is_experimental_tools_enabled() -> bool:
+    return os.getenv("NOTIONCHAT_EXPERIMENTAL_TOOLS", "0").strip().lower() in ("1", "true", "yes")
+
+
 def align_tool_calls_to_client(
     tool_calls: list[dict[str, Any]],
     client_tools: list[dict[str, Any]] | None,
@@ -297,7 +304,16 @@ def align_tool_calls_to_client(
 ) -> list[dict[str, Any]]:
     allowed = client_tool_names(client_tools)
     if not allowed:
-        return normalize_tool_calls(tool_calls)
+        return []
+
+    tool_schemas: dict[str, dict[str, Any]] = {}
+    if client_tools:
+        for t in client_tools:
+            if isinstance(t, dict):
+                fn = t.get("function") if t.get("type") == "function" else t
+                if isinstance(fn, dict) and "name" in fn:
+                    params = fn.get("parameters")
+                    tool_schemas[str(fn["name"])] = params if isinstance(params, dict) else {}
 
     lower_to_canonical = {name.lower(): name for name in allowed}
     if allow_aliases:
@@ -308,17 +324,42 @@ def align_tool_calls_to_client(
     out: list[dict[str, Any]] = []
     for tc in normalize_tool_calls(tool_calls):
         name = str((tc.get("function") or {}).get("name", ""))
+        canonical_name: str | None = None
         if name in allowed:
-            out.append(tc)
+            canonical_name = name
+        elif allow_aliases and name.lower() in lower_to_canonical:
+            canonical_name = lower_to_canonical[name.lower()]
+
+        if not canonical_name:
             continue
-        if allow_aliases:
-            mapped = lower_to_canonical.get(name.lower())
-            if mapped:
-                fixed = dict(tc)
-                fn = dict(tc.get("function") or {})
-                fn["name"] = mapped
-                fixed["function"] = fn
-                out.append(fixed)
+
+        fixed = dict(tc)
+        fn = dict(tc.get("function") or {})
+        fn["name"] = canonical_name
+
+        raw_args = fn.get("arguments", "")
+        if isinstance(raw_args, str):
+            try:
+                args_dict = json.loads(raw_args)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        elif isinstance(raw_args, dict):
+            args_dict = raw_args
+            fn["arguments"] = json.dumps(args_dict, ensure_ascii=False)
+        else:
+            continue
+
+        # Check required fields from schema if available
+        schema = tool_schemas.get(canonical_name, {})
+        if isinstance(schema, dict) and isinstance(args_dict, dict):
+            required_fields = schema.get("required")
+            if isinstance(required_fields, list) and not all(
+                rf in args_dict for rf in required_fields
+            ):
+                continue
+
+        fixed["function"] = fn
+        out.append(fixed)
     return out
 
 
@@ -344,9 +385,7 @@ def filter_agent_tool_calls(
 
     blocked = set(last_loop)
     return [
-        tc
-        for tc in tool_calls
-        if str((tc.get("function") or {}).get("name", "")) not in blocked
+        tc for tc in tool_calls if str((tc.get("function") or {}).get("name", "")) not in blocked
     ]
 
 
@@ -413,7 +452,9 @@ def infer_scaffold_command(user_request: str) -> str | None:
     lower = user_request.lower()
     if "next.js" in lower or "nextjs" in lower or re.search(r"\bnext\b", lower):
         return "npm create next-app@latest . -- --typescript --tailwind --eslint --app --no-src-dir --import-alias '@/*'"
-    if any(token in lower for token in ("vite", "react", "tailwind", "shadcn", "tsx", "typescript")):
+    if any(
+        token in lower for token in ("vite", "react", "tailwind", "shadcn", "tsx", "typescript")
+    ):
         return "npm create vite@latest . -- --template react-ts"
     if looks_like_coding_task_text(user_request):
         return "npm create vite@latest . -- --template react-ts"
@@ -432,9 +473,7 @@ def should_bootstrap_scaffold(messages: list[Any], notion_text: str | None) -> b
 
     if not conversation_has_tool_history(messages):
         return True
-    if notion_text and looks_like_tool_denial(notion_text):
-        return True
-    return False
+    return bool(notion_text and looks_like_tool_denial(notion_text))
 
 
 def bootstrap_agent_tool_calls(
@@ -464,6 +503,7 @@ def bootstrap_agent_tool_calls(
                 "description": "Scaffold project in current workspace",
                 "block_until_ms": _SCAFFOLD_BLOCK_MS,
             },
+            synthetic=True,
         )
     )
     return [tc]
@@ -641,7 +681,12 @@ def normalize_scaffold_command(command: str) -> str:
 
     match = _PACKAGE_MANAGER_CREATE_RE.match(cmd)
     if match:
-        pm, pkg, target, flags = match.group(1), match.group(2), match.group(3), match.group(4) or ""
+        pm, pkg, target, flags = (
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(4) or "",
+        )
         if target is None or target.startswith("-"):
             return f"{pm} create {pkg} .{flags}" if flags else f"{pm} create {pkg} ."
         if target != ".":
@@ -650,7 +695,12 @@ def normalize_scaffold_command(command: str) -> str:
 
     match = _NPX_CREATE_RE.match(cmd)
     if match:
-        npx, pkg, target, flags = match.group(1), match.group(2), match.group(3), match.group(4) or ""
+        npx, pkg, target, flags = (
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(4) or "",
+        )
         if target is None or target.startswith("-"):
             return f"{npx} {pkg} .{flags}" if flags else f"{npx} {pkg} ."
         if target != ".":
@@ -683,6 +733,7 @@ def normalize_shell_tool_call(tc: dict[str, Any]) -> dict[str, Any]:
         return tc
 
     raw_args = (tc.get("function") or {}).get("arguments", "{}")
+    args: dict[str, Any]
     try:
         args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
     except (json.JSONDecodeError, TypeError):
@@ -720,7 +771,9 @@ def conversation_had_scaffold_shell(messages: list[Any]) -> bool:
                     command = args.get("command")
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     command = None
-            if isinstance(command, str) and is_scaffold_command(normalize_scaffold_command(command)):
+            if isinstance(command, str) and is_scaffold_command(
+                normalize_scaffold_command(command)
+            ):
                 return True
     return False
 
@@ -733,11 +786,16 @@ def conversation_has_scaffold_tool_result(messages: list[Any]) -> bool:
             content = msg.get("content")
 
         if role == "tool":
-            name = getattr(msg, "name", None) or (msg.get("name") if isinstance(msg, dict) else None)
+            name = getattr(msg, "name", None) or (
+                msg.get("name") if isinstance(msg, dict) else None
+            )
             text = _extract_text(content).lower()
             if str(name or "").lower() in {n.lower() for n in _SHELL_TOOL_NAMES}:
                 return True
-            if any(marker in text for marker in ("exit code", "npm create", "pnpm create", "npx create")):
+            if any(
+                marker in text
+                for marker in ("exit code", "npm create", "pnpm create", "npx create")
+            ):
                 return True
 
         if role == "user" and _message_content_has_tool_result(content):
@@ -758,9 +816,9 @@ def sequentialize_agent_tool_calls(
         return []
 
     normalized = [normalize_shell_tool_call(tc) for tc in tool_calls]
-    scaffold_done = conversation_had_scaffold_shell(messages) and conversation_has_scaffold_tool_result(
+    scaffold_done = conversation_had_scaffold_shell(
         messages
-    )
+    ) and conversation_has_scaffold_tool_result(messages)
 
     scaffold_shells: list[dict[str, Any]] = []
     other_calls: list[dict[str, Any]] = []
@@ -779,8 +837,10 @@ def sequentialize_agent_tool_calls(
     return other_calls
 
 
-def _make_tool_call(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _make_tool_call(
+    tool_name: str, arguments: dict[str, Any], *, synthetic: bool = False
+) -> dict[str, Any]:
+    call: dict[str, Any] = {
         "id": _new_tool_call_id(),
         "type": "function",
         "function": {
@@ -788,12 +848,16 @@ def _make_tool_call(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]
             "arguments": json.dumps(arguments, ensure_ascii=False),
         },
     }
+    if synthetic:
+        call["synthetic"] = True
+    return call
 
 
 def _make_write_tool_call(tool_name: str, path: str, contents: str) -> dict[str, Any]:
     return _make_tool_call(
         tool_name,
         {"path": path.replace("\\", "/"), "contents": contents},
+        synthetic=True,
     )
 
 
@@ -891,10 +955,7 @@ def synthesize_shell_tool_calls(
     shell_tool = _pick_tool(client_tools, "Shell", "run_terminal_cmd", "run_terminal_command")
     if not shell_tool:
         return []
-    commands = [
-        normalize_scaffold_command(cmd)
-        for cmd in extract_shell_commands(notion_text)
-    ]
+    commands = [normalize_scaffold_command(cmd) for cmd in extract_shell_commands(notion_text)]
     if not commands:
         return []
     out: list[dict[str, Any]] = []
@@ -902,7 +963,7 @@ def synthesize_shell_tool_calls(
         args: dict[str, Any] = {"command": cmd, "description": cmd[:120]}
         if is_scaffold_command(cmd):
             args["block_until_ms"] = _SCAFFOLD_BLOCK_MS
-        out.append(_make_tool_call(shell_tool, args))
+        out.append(_make_tool_call(shell_tool, args, synthetic=True))
     return out
 
 
@@ -937,6 +998,8 @@ def compile_agent_tool_calls(
     prompt: str = "",
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Compile Notion output into Cursor-compatible tool_calls (multi-tool, multi-source)."""
+    if not is_experimental_tools_enabled() or not client_tools:
+        return notion_text, []
     text = notion_text or ""
     collected: list[dict[str, Any]] = []
 
@@ -957,6 +1020,7 @@ def compile_agent_tool_calls(
         )
 
     collected = dedupe_tool_calls(collected)
+    collected = align_tool_calls_to_client(collected, client_tools, allow_aliases=True)
     collected = sequentialize_agent_tool_calls(collected, messages)
     collected = filter_agent_tool_calls(
         collected,
@@ -1015,10 +1079,7 @@ def build_ide_tools_instruction(
     tool_choice: str | dict[str, Any] | None = None,
 ) -> str:
     normalized = normalize_tools(tools)
-    names = [
-        str((t.get("function") or {}).get("name", ""))
-        for t in normalized
-    ]
+    names = [str((t.get("function") or {}).get("name", "")) for t in normalized]
     names = [n for n in names if n]
     specs = json.dumps(normalized, ensure_ascii=False, indent=2)
     if len(specs) > 14000:
@@ -1085,7 +1146,8 @@ def build_tools_system_append(
 
 
 def _format_tool_call(tc: dict[str, Any]) -> dict[str, Any]:
-    fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+    fn_raw = tc.get("function")
+    fn: dict[str, Any] = fn_raw if isinstance(fn_raw, dict) else {}
     name = fn.get("name") or tc.get("name")
     if not isinstance(name, str) or not name:
         raise ValueError("tool call missing function name")
@@ -1096,11 +1158,14 @@ def _format_tool_call(tc: dict[str, Any]) -> dict[str, Any]:
         args = raw_args
     else:
         args = "{}"
-    return {
+    ret: dict[str, Any] = {
         "id": str(tc.get("id") or _new_tool_call_id()),
         "type": "function",
         "function": {"name": name, "arguments": args},
     }
+    if tc.get("synthetic"):
+        ret["synthetic"] = True
+    return ret
 
 
 def normalize_tool_calls(raw: Any) -> list[dict[str, Any]]:
@@ -1203,9 +1268,8 @@ def prepare_chat_input(
     """Build (system, prompt, tools_active, ide_agent, tools) for Notion from OpenAI messages."""
     cursor_ide = is_ide_agent_messages(messages)
     normalized_tools = normalize_tools(tools)
-    if not normalized_tools and cursor_ide:
-        normalized_tools = cursor_fallback_tools()
-    tools_active = bool(normalized_tools) and tool_choice != "none"
+    experimental_enabled = is_experimental_tools_enabled()
+    tools_active = bool(normalized_tools) and tool_choice != "none" and experimental_enabled
     ide_agent = tools_active and (is_ide_agent_tools(normalized_tools) or cursor_ide)
 
     system_parts: list[str] = []
@@ -1265,9 +1329,7 @@ def prepare_chat_input(
                         fn = tc.function
                         name = fn.name
                         args = fn.arguments
-                    transcript_blocks.append(
-                        f"Assistant: [tool call `{name}` args={args}]"
-                    )
+                    transcript_blocks.append(f"Assistant: [tool call `{name}` args={args}]")
             text = _extract_text(content).strip()
             if text:
                 transcript_blocks.append(f"Assistant: {text}")
@@ -1291,7 +1353,9 @@ def prepare_chat_input(
 
     if not content_mode and not tools_active:
         for msg in messages:
-            role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else None)
+            role = getattr(msg, "role", None) or (
+                msg.get("role") if isinstance(msg, dict) else None
+            )
             if role != "user":
                 continue
             content = getattr(msg, "content", None)

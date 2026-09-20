@@ -214,13 +214,16 @@ class NotionAIClient:
         return body, headers, active_thread_id, notion_model, save_state
 
     def _raise_http(self, status_code: int, body: str) -> None:
-        snippet = body[:500]
+        log.debug("Notion API error status=%d body=%r", status_code, body[:500])
         if status_code in (401, 403):
             raise NotionChatError(
-                f"Notion auth failed ({status_code}). Refresh token_v2 cookie. {snippet!r}",
+                f"Notion auth failed ({status_code}). Please check or refresh your token_v2 cookie.",
                 status_code=401,
             )
-        raise NotionChatError(f"Notion API {status_code}: {snippet!r}", status_code=502)
+        raise NotionChatError(
+            f"Notion API returned error HTTP {status_code}.",
+            status_code=502,
+        )
 
     async def _consume_stream(
         self,
@@ -244,10 +247,7 @@ class NotionAIClient:
                 raw = parser.text
                 if not has_released_buffer:
                     should_release = (
-                        len(raw) >= 500
-                        or "\n\n" in raw
-                        or "\n#" in raw
-                        or raw.startswith("#")
+                        len(raw) >= 500 or "\n\n" in raw or "\n#" in raw or raw.startswith("#")
                     )
                     if not should_release:
                         continue
@@ -385,7 +385,9 @@ class NotionAIClient:
             ide_agent=ide_agent_mode,
         )
         if not content and not tool_calls:
-            raise NotionChatError(_empty_response_message(result, active_thread_id), status_code=502)
+            raise NotionChatError(
+                _empty_response_message(result, active_thread_id), status_code=502
+            )
         save_state()
         return ChatResult(
             text=raw_text if ide_agent_mode else content,
@@ -441,6 +443,7 @@ class NotionAIClient:
         ide_agent_mode: bool = False,
         client_tools: list[dict[str, Any]] | None = None,
         buffer_until_complete: bool = False,
+        allow_stream_replace: bool = False,
     ) -> tuple[AsyncIterator[str], str, Callable[[], ChatResult]]:
         body, headers, active_thread_id, notion_model, save_state = self._prepare(
             prompt=prompt,
@@ -520,36 +523,41 @@ class NotionAIClient:
                                     await queue.put(delta)
                                     last_emitted = cleaned
                             else:
-                                # Notion patched an earlier block — full snapshot
-                                # so append clients can resync (live streaming).
-                                emitted_any = True
-                                await queue.put(replace_mark + cleaned)
-                                last_emitted = cleaned
+                                if allow_stream_replace:
+                                    # Opt-in: Notion patched an earlier block — full snapshot
+                                    # with replace marker so custom clients can resync.
+                                    emitted_any = True
+                                    await queue.put(replace_mark + cleaned)
+                                    last_emitted = cleaned
+                                else:
+                                    # Standard OpenAI: append-only deltas.
+                                    if len(cleaned) > len(last_emitted):
+                                        delta = cleaned[len(last_emitted) :]
+                                        emitted_any = True
+                                        await queue.put(delta)
+                                        last_emitted = cleaned
 
                         if not buffer_until_complete:
                             if not has_released_buffer and parser.text:
-                                cleaned = clean_notion_output_text(
-                                    parser.text, finalize=True
-                                )
+                                cleaned = clean_notion_output_text(parser.text, finalize=True)
                                 if cleaned:
                                     emitted_any = True
                                     await queue.put(cleaned)
                                     last_emitted = cleaned
                             elif has_released_buffer and parser.text:
-                                final_cleaned = clean_notion_output_text(
-                                    parser.text, finalize=True
-                                )
+                                final_cleaned = clean_notion_output_text(parser.text, finalize=True)
                                 if final_cleaned and final_cleaned != last_emitted:
                                     emitted_any = True
                                     if final_cleaned.startswith(last_emitted):
-                                        await queue.put(
-                                            final_cleaned[len(last_emitted) :]
-                                        )
-                                    else:
+                                        await queue.put(final_cleaned[len(last_emitted) :])
+                                    elif allow_stream_replace:
                                         await queue.put(replace_mark + final_cleaned)
+                                    elif len(final_cleaned) > len(last_emitted):
+                                        await queue.put(final_cleaned[len(last_emitted) :])
                                     last_emitted = final_cleaned
 
                         if parser.pending_tool_confirmations:
+
                             def _emit(delta: str) -> None:
                                 if buffer_until_complete:
                                     return
@@ -648,4 +656,6 @@ class NotionAIClient:
                 headers=headers,
             )
         except NotionHttpStatusError as e:
-            raise NotionChatError(f"getAvailableModels failed: {e.status_code}", status_code=502) from e
+            raise NotionChatError(
+                f"getAvailableModels failed: {e.status_code}", status_code=502
+            ) from e

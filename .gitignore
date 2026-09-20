@@ -13,6 +13,9 @@ notion_account.json
 dist/
 build/
 logs/
+.coverage
+.pytest_cache/
+.ruff_cache/
 
 # Private capture files (cookies, internal Notion payloads)
 network.txt

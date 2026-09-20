@@ -85,8 +85,12 @@ def main(argv: list[str] | None = None) -> None:
     serve_p.set_defaults(func=cmd_serve)
 
     setup_p = sub.add_parser("setup", help="Interactive wizard: cookie -> account file -> .env")
-    setup_p.add_argument("--env", default=".env", help="Path to write environment file (default: .env)")
-    setup_p.add_argument("--account", default="notion_account.json", help="Output account file path")
+    setup_p.add_argument(
+        "--env", default=".env", help="Path to write environment file (default: .env)"
+    )
+    setup_p.add_argument(
+        "--account", default="notion_account.json", help="Output account file path"
+    )
     setup_p.add_argument("--cookie", default=None, help="Skip cookie prompt and use this value")
     setup_p.add_argument("--space-name", default=None, help="Workspace name when multiple exist")
     setup_p.add_argument("--api-key", default=None, help="API key for NOTIONCHAT_API_KEY")
@@ -99,11 +103,15 @@ def main(argv: list[str] | None = None) -> None:
         help="Store NOTION_COOKIE in .env (default: ask interactively)",
     )
     setup_p.add_argument("--force", action="store_true", help="Overwrite .env without asking")
-    setup_p.add_argument("-y", "--yes", action="store_true", help="Accept defaults with minimal prompts")
+    setup_p.add_argument(
+        "-y", "--yes", action="store_true", help="Accept defaults with minimal prompts"
+    )
     setup_p.set_defaults(func=cmd_setup)
 
     init_p = sub.add_parser("init", help="Bootstrap notion_account.json from browser cookie")
-    init_p.add_argument("--cookie", required=True, help='Full document.cookie string, or "-" for stdin')
+    init_p.add_argument(
+        "--cookie", required=True, help='Full document.cookie string, or "-" for stdin'
+    )
     init_p.add_argument("--space-name", default=None, help="Workspace name when multiple exist")
     init_p.add_argument("--account", default="notion_account.json", help="Output account file path")
     init_p.add_argument(

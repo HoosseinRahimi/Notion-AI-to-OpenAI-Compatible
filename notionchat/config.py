@@ -48,6 +48,7 @@ class Settings:
     default_model: str
     # Reuse one Notion thread for N completions before rotating (0 = off).
     thread_reuse_limit: int
+    experimental_tools: bool = False
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -69,9 +70,20 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def validate_settings_security(settings: Settings) -> None:
+    host = settings.host.strip().lower()
+    is_loopback = host in ("127.0.0.1", "localhost", "::1")
+    if not is_loopback and settings.api_key in ("sk-notionchat", ""):
+        raise NotionChatError(
+            f"Refusing to bind to non-loopback host {settings.host!r} with default or empty API key. "
+            "Set a strong NOTIONCHAT_API_KEY in your environment or .env file.",
+            status_code=500,
+        )
+
+
 def load_settings() -> Settings:
     _load_dotenv_files()
-    return Settings(
+    settings = Settings(
         api_key=os.getenv("NOTIONCHAT_API_KEY", "sk-notionchat"),
         host=os.getenv("NOTIONCHAT_HOST", "127.0.0.1"),
         port=int(os.getenv("NOTIONCHAT_PORT", "1994")),
@@ -80,7 +92,11 @@ def load_settings() -> Settings:
         base_url=os.getenv("NOTIONCHAT_NOTION_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
         default_model=os.getenv("NOTIONCHAT_DEFAULT_MODEL", "ambrosia-tart-high"),
         thread_reuse_limit=max(0, _env_int("NOTIONCHAT_THREAD_REUSE_LIMIT", 0)),
+        experimental_tools=os.getenv("NOTIONCHAT_EXPERIMENTAL_TOOLS", "0").strip().lower()
+        in ("1", "true", "yes"),
     )
+    validate_settings_security(settings)
+    return settings
 
 
 def _cookie_identity_changed(acc: NotionAccount, cookie: str) -> bool:
@@ -92,9 +108,7 @@ def _cookie_identity_changed(acc: NotionAccount, cookie: str) -> bool:
         return True
     if new_token and acc.token_v2 and new_token != acc.token_v2:
         return True
-    if not acc.space_id or not acc.space_view_id:
-        return True
-    return False
+    return bool(not acc.space_id or not acc.space_view_id)
 
 
 def _apply_fingerprint_env(acc: NotionAccount) -> NotionAccount:
@@ -147,7 +161,7 @@ def load_account_from_env(settings: Settings) -> NotionAccount:
         acc = load_notion_account(settings.account_path)
         if not acc.space_id:
             raise NotionChatError(
-                "Account file is missing space_id. Run: python -m notionchat init --cookie \"...\"",
+                'Account file is missing space_id. Run: python -m notionchat init --cookie "..."',
                 status_code=500,
             )
         return _apply_fingerprint_env(acc)
@@ -161,6 +175,6 @@ def load_account_from_env(settings: Settings) -> NotionAccount:
 
     raise NotionChatError(
         "No Notion credentials found. Set NOTION_COOKIE in .env or run:\n"
-        "  python -m notionchat init --cookie \"<paste document.cookie>\"",
+        '  python -m notionchat init --cookie "<paste document.cookie>"',
         status_code=500,
     )

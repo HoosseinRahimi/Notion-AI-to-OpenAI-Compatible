@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -72,7 +75,15 @@ def save_notion_account(acc: NotionAccount, path: Path | str) -> None:
             continue
         data[f.name] = getattr(acc, f.name)
     data.update(acc.extras)
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+    with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False, encoding="utf-8") as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    if os.name != "nt":
+        with suppress(OSError):
+            os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, p)
 
 
 def build_cookie_header(acc: NotionAccount) -> str:
@@ -83,7 +94,7 @@ def build_cookie_header(acc: NotionAccount) -> str:
         f"notion_browser_id={acc.browser_id}",
         f"device_id={acc.device_id}",
         f"notion_user_id={acc.user_id}",
-        f'notion_users=[%22{acc.user_id}%22]',
+        f"notion_users=[%22{acc.user_id}%22]",
         "notion_check_cookie_consent=false",
         "notion_locale=en-US/autodetect",
         f"token_v2={acc.token_v2}",

@@ -38,9 +38,7 @@ def chrome_major_from_ua(user_agent: str) -> int | None:
 def sec_ch_ua_from_user_agent(user_agent: str) -> str:
     major = chrome_major_from_ua(user_agent) or 150
     # Match current Chrome client hints shape seen on app.notion.com.
-    return (
-        f'"Not;A=Brand";v="8", "Chromium";v="{major}", "Google Chrome";v="{major}"'
-    )
+    return f'"Not;A=Brand";v="8", "Chromium";v="{major}", "Google Chrome";v="{major}"'
 
 
 def impersonate_for_user_agent(user_agent: str) -> str:
@@ -118,12 +116,8 @@ def fingerprint_kwargs(
     user_agent: str | None = None,
     client_version: str | None = None,
 ) -> dict[str, str]:
-    ua = (user_agent or os.getenv("NOTION_USER_AGENT", "").strip() or DEFAULT_USER_AGENT)
-    cv = (
-        client_version
-        or os.getenv("NOTION_CLIENT_VERSION", "").strip()
-        or DEFAULT_CLIENT_VERSION
-    )
+    ua = user_agent or os.getenv("NOTION_USER_AGENT", "").strip() or DEFAULT_USER_AGENT
+    cv = client_version or os.getenv("NOTION_CLIENT_VERSION", "").strip() or DEFAULT_CLIENT_VERSION
     return {
         "user_agent": ua,
         "client_version": cv,

@@ -145,7 +145,11 @@ def _pick_workspace(workspaces: list[Workspace], space_name: str | None) -> Work
         if matches:
             return matches[0]
         # Partial / substring match (e.g. env has stale name from another account)
-        partial = [w for w in workspaces if needle in w.space_name.lower() or w.space_name.lower() in needle]
+        partial = [
+            w
+            for w in workspaces
+            if needle in w.space_name.lower() or w.space_name.lower() in needle
+        ]
         if len(partial) == 1:
             log.warning(
                 "Workspace %r not exact; using closest match %r",

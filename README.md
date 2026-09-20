@@ -49,14 +49,33 @@ Works with [Cursor](https://cursor.com), [9router](https://github.com), Postman,
 
 - **OpenAI-compatible endpoints**
   - `POST /v1/chat/completions` (streaming and non-streaming)
-  - `GET /v1/models` (dynamic list from Notion `getAvailableModels`, with fallbacks)
-  - `GET /healthz`
+  - `POST /v1/responses` (OpenAI Responses API contract)
+  - `GET /v1/models` (dynamic list from Notion `getAvailableModels`, with aliases & stale cache fallback)
+  - `GET /healthz` (liveness probe)
+  - `GET /readyz` (readiness probe verifying loaded Notion credentials)
 - **Browser cookie authentication** — no separate Notion API key required
+- **Hardened Security**
+  - Timing-safe API key verification (`secrets.compare_digest`)
+  - Public bind protection (prohibits binding to `0.0.0.0` with default/empty key)
+  - Atomic state writes with POSIX `0600` file permissions
+  - Sanitized upstream error responses
+- **Standard Streaming** — Append-only SSE chunk streaming without control markers; opt-in `X-Allow-Stream-Replace: 1` header
 - **Model aliases** — e.g. `opus-4.8`, `gpt-4o`, `sonnet-4.6` mapped to Notion internal model IDs
-- **Thread state** for normal chat sessions (optional `user` field for continuity)
-- **Thread reuse pool** — optional `NOTIONCHAT_THREAD_REUSE_LIMIT` to recycle one Notion chat window for N turns (default off)
-- **Tools bridge (experimental)** — prompt-based translation between OpenAI-style tool calls and Notion AI output, aimed at Cursor Agent mode
+- **Thread state & concurrency** — Per-session serialization locks, bounded TTL reuse pool (`NOTIONCHAT_THREAD_REUSE_LIMIT`)
+- **Tools bridge (experimental)** — Feature-gated (`NOTIONCHAT_EXPERIMENTAL_TOOLS=1`) with strict client allowlist and schema validation
 - **Postman collection** in [`postman/`](postman/)
+
+## Compatibility Matrix
+
+| Endpoint / Feature | Status | Notes |
+| :--- | :--- | :--- |
+| `POST /v1/chat/completions` | **Supported** | Full streaming & non-streaming support. |
+| `POST /v1/responses` | **Supported** | Maps to/from Chat Completions; returns `status: "completed"`. |
+| `GET /v1/models` | **Supported** | Dynamically fetched from Notion AI, alias mapping, stale cache fallback. |
+| `GET /healthz` | **Supported** | Liveness check (HTTP 200). |
+| `GET /readyz` | **Supported** | Readiness check (HTTP 200 if credentials loaded, 503 if unconfigured). |
+| Streaming (`stream=true`) | **Supported** | Standard append-only SSE deltas. Opt-in `X-Allow-Stream-Replace: 1`. |
+| Tool Calling (`tools`) | **Experimental** | Gated by `NOTIONCHAT_EXPERIMENTAL_TOOLS=1`. Enforces client allowlist & schema validation. |
 
 ## How it works
 
@@ -123,6 +142,7 @@ Edit `.env`:
 | `NOTION_PROXY` | Optional — HTTP/SOCKS proxy for Notion egress (needed when a home-PC cookie is used on a VPS) |
 | `NOTION_USER_AGENT` / `NOTION_CLIENT_VERSION` | Optional — match the browser that created the cookie |
 | `NOTIONCHAT_THREAD_REUSE_LIMIT` | Optional — reuse one Notion chat for N completions before rotating (`0` = off, default). Helps reduce thread spam / ban risk |
+| `NOTIONCHAT_EXPERIMENTAL_TOOLS` | Optional — set to `1` or `true` to enable experimental tool calling / agent bridge (`0` = off, default) |
 
 ### 3. Bootstrap account from browser cookie
 
@@ -257,13 +277,17 @@ notion serve
 ### 6. Test
 
 ```bash
+# Health & readiness checks
 curl http://127.0.0.1:1994/healthz
+curl http://127.0.0.1:1994/readyz
 
+# List available models
 curl http://127.0.0.1:1994/v1/models \
-  -H "Authorization: Bearer sk-notionchat"
+  -H "Authorization: Bearer sk-your-notionchat-key"
 
+# Chat completion
 curl http://127.0.0.1:1994/v1/chat/completions \
-  -H "Authorization: Bearer sk-notionchat" \
+  -H "Authorization: Bearer sk-your-notionchat-key" \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"opus-4.8\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one sentence.\"}]}"
 ```
@@ -333,15 +357,28 @@ Notes:
 
 ### `POST /v1/chat/completions`
 
-Supports common OpenAI fields:
+Supports standard OpenAI Chat Completions fields:
+- `model`: Target model ID or alias (e.g. `opus-4.8`, `gpt-4o`, `sonnet-4.6`).
+- `messages`: Standard role-based conversation array (`system`, `user`, `assistant`, `tool`).
+- `stream`: Boolean for Server-Sent Events (SSE) streaming. Emits append-only deltas by default. Send `X-Allow-Stream-Replace: 1` header to enable stream replacement markers.
+- `tools`, `tool_choice`, `parallel_tool_calls`: Experimental function calling (requires `NOTIONCHAT_EXPERIMENTAL_TOOLS=1`).
+- `user`: Optional session key for thread continuity across requests.
 
-- `model`, `messages`, `stream`
-- `tools`, `tool_choice`, `parallel_tool_calls`
-- `user` (optional session key for thread continuity in non-agent chat)
+### `POST /v1/responses`
+
+OpenAI Responses API contract:
+- Accepts `model`, `input` (string or array of text/input items), `tools`, `instructions`.
+- Automatically maps to/from Chat Completions representation.
+- Always returns standard Responses payload with `status: "completed"`.
 
 ### `GET /v1/models`
 
-Returns models available to your Notion workspace, cached for 5 minutes.
+Returns models available to your Notion workspace, cached for 5 minutes with automatic stale-cache fallback on upstream network interruptions.
+
+### `GET /healthz` & `GET /readyz`
+
+- `GET /healthz`: Basic liveness probe (returns `{"status": "ok"}`).
+- `GET /readyz`: Readiness probe (returns HTTP 200 with account workspace info if credentials are valid, HTTP 503 if unconfigured or invalid).
 
 ## Project layout
 

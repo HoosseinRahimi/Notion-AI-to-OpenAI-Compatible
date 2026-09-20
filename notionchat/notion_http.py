@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from curl_cffi.requests import AsyncSession, Response
@@ -50,8 +50,8 @@ def _proxy_log_label(proxy: str) -> str:
 # "TypeError: initializer for ctype 'void *' must be a cdata pointer, not NoneType".
 # Monkey-patch it to skip None handles. Applied once at import.
 try:
+    from curl_cffi._wrapper import lib  # type: ignore
     from curl_cffi.aio import AsyncCurl as _AsyncCurl
-    from curl_cffi._wrapper import lib, ffi  # type: ignore
 
     _original_pop_future = _AsyncCurl._pop_future
 
@@ -60,10 +60,8 @@ try:
         if curl_ptr is None or self._curlm is None:
             return self._curl2future.pop(curl, None)
         errcode = lib.curl_multi_remove_handle(self._curlm, curl_ptr)
-        try:
+        with suppress(Exception):
             self._check_error(errcode)
-        except Exception:
-            pass
         self._curl2curl.pop(curl_ptr, None)
         return self._curl2future.pop(curl, None)
 
@@ -189,14 +187,16 @@ class NotionHttpClient:
             session_kwargs["proxy"] = self._proxy
         session = AsyncSession(**session_kwargs)
         impersonate = self._resolve_impersonate(headers)
-        log.debug("Notion HTTP impersonate=%s ua=%s", impersonate, headers.get("user-agent", "")[:60])
+        log.debug(
+            "Notion HTTP impersonate=%s ua=%s", impersonate, headers.get("user-agent", "")[:60]
+        )
         try:
             resp = await session.request(
-                method,
+                cast(Any, method),
                 url,
                 json=json,
                 headers=headers,
-                impersonate=impersonate,
+                impersonate=cast(Any, impersonate),
                 stream=stream,
             )
             return NotionStreamResponse(resp, session)

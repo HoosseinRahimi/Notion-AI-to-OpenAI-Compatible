@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -28,7 +31,15 @@ def thread_state_path(thread_id: str, base_dir: Path) -> Path:
 def save_thread_state(state: ThreadState, base_dir: Path) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
     p = thread_state_path(state.thread_id, base_dir)
-    p.write_text(json.dumps(asdict(state), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    content = json.dumps(asdict(state), indent=2, ensure_ascii=False) + "\n"
+
+    with tempfile.NamedTemporaryFile("w", dir=base_dir, delete=False, encoding="utf-8") as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    if os.name != "nt":
+        with suppress(OSError):
+            os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, p)
     return p
 
 

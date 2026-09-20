@@ -172,6 +172,11 @@ def cache_openai_models(
     _models_cache = (time.time(), models, alias_map or {})
 
 
+def clear_model_cache() -> None:
+    global _models_cache
+    _models_cache = None
+
+
 def get_cached_openai_models() -> list[dict[str, Any]] | None:
     if _models_cache is None:
         return None
@@ -179,6 +184,14 @@ def get_cached_openai_models() -> list[dict[str, Any]] | None:
     if time.time() - cached_at > MODELS_CACHE_TTL_SECONDS:
         return None
     return models
+
+
+def get_stale_cached_openai_models() -> list[dict[str, Any]] | None:
+    """Return cached models even if TTL has expired (stale-while-revalidate pattern)."""
+    if _models_cache is None:
+        return None
+    _, models, _ = _models_cache
+    return models or None
 
 
 def get_cached_alias_map() -> dict[str, str] | None:
@@ -218,7 +231,9 @@ def _lookup_model(name: str | None, mapping: dict[str, str]) -> str | None:
     return None
 
 
-def resolve_model(model: str | None, *, default: str, alias_map: dict[str, str] | None = None) -> str:
+def resolve_model(
+    model: str | None, *, default: str, alias_map: dict[str, str] | None = None
+) -> str:
     dynamic = alias_map if alias_map is not None else (get_cached_alias_map() or {})
     model = normalize_request_model(model)
     default = normalize_request_model(default) or default
