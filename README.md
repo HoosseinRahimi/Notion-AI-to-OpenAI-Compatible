@@ -2,6 +2,8 @@
 
 # Notion AI → OpenAI Compatible
 
+![Intro](demo.gif)
+
 **Unofficial OpenAI-compatible proxy for Notion AI**  
 Cookie auth · streaming · Cursor / 9router / Postman
 
