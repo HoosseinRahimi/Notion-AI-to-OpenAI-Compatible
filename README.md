@@ -6,6 +6,7 @@
 Cookie auth · streaming · Cursor / 9router / Postman
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
+[![CI](https://github.com/HoosseinRahimi/Notion-AI-to-OpenAI-Compatible/actions/workflows/ci.yml/badge.svg)](https://github.com/HoosseinRahimi/Notion-AI-to-OpenAI-Compatible/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-OpenAI%20API-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 
