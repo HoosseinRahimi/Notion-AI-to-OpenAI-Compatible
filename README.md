@@ -14,9 +14,9 @@ Cookie auth · streaming · Cursor / 9router / Postman
 
 <br/>
 
-### Support the project
+### Support the original author
 
-If this saves you time, a coffee (or satoshi) helps keep it maintained.
+The donation links below belong to the original author of NotionChat (mughu-id). If the original project saved you time, a coffee (or satoshi) helps them.
 
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/captainredz?locale.x=en_US&country.x=ID)
 [![Patreon](https://img.shields.io/badge/Patreon-Support-FF424D?style=for-the-badge&logo=patreon&logoColor=white)](https://patreon.com/mughu?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink)
@@ -43,6 +43,8 @@ If this saves you time, a coffee (or satoshi) helps keep it maintained.
 ---
 
 > **Educational / unofficial** — for learning and research. Not affiliated with or endorsed by Notion. You must comply with Notion’s Terms of Service and your workspace plan limits.
+
+> **Maintained continuation** of the original NotionChat by [mughu-id](https://github.com/mughu-id/Notion-AI-to-OpenAI-Compatible) (MIT). This repository adds a full test suite, CI, security hardening and the OpenAI Responses API endpoint; the upstream project has been quiet since July 2026.
 
 OpenAI-compatible HTTP API that routes chat to **Notion AI** (`runInferenceTranscript`) using your Notion browser session (`token_v2`).
 
