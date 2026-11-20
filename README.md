@@ -86,7 +86,8 @@ Notion AI is a **chat** product. It does not expose native OpenAI function calli
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/mughu-id/Notion-AI-to-OpenAI-Compatible.git
+# Clone THIS repository (the maintained continuation), not the upstream fork:
+git clone https://github.com/HoosseinRahimi/Notion-AI-to-OpenAI-Compatible.git
 cd Notion-AI-to-OpenAI-Compatible
 python -m venv .venv
 
